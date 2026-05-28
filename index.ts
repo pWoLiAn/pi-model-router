@@ -126,7 +126,8 @@ function stripDateSuffix(s: string): string {
 
 export default function (pi: ExtensionAPI) {
   const extDir = path.dirname(fileURLToPath(import.meta.url));
-  const cfgPath = path.join(extDir, "router-config.json");
+  const userCfgPath = path.join(homedir(), ".pi", "agent", "model-router.json");
+  const cfgPath = fs.existsSync(userCfgPath) ? userCfgPath : path.join(extDir, "router-config.json");
   const cachePath = path.join(extDir, ".cache/scan-cache.json");
 
   let cfg: Config;
