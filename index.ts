@@ -12,7 +12,6 @@ import type { AssistantMessage, AssistantMessageEvent, Model, Context, SimpleStr
 import { streamSimple as piStreamSimple, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { truncateToWidth } from "@mariozechner/pi-tui";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
@@ -952,6 +951,20 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  // ── Status Helper ──────────────────────────────────────────────────────
+
+  function updateRouterStatus(ctx: any) {
+    if (!ctx?.ui?.theme) return;
+    const theme = ctx.ui.theme;
+    const ref = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "";
+    const grp = ref ? detectGroup(ref) : null;
+    const rlN = [...limits.keys()].filter(r => isLimited(r)).length;
+    const parts: string[] = [];
+    if (grp) parts.push(theme.fg("accent", `🧭${grp}`));
+    if (rlN > 0) parts.push(theme.fg("error", `⛔${rlN}`));
+    ctx.ui.setStatus("model-router", parts.length > 0 ? parts.join(" ") : undefined);
+  }
+
   // ── Events ─────────────────────────────────────────────────────────────
 
   load(); loadModelMap(); loadCache();
@@ -965,50 +978,15 @@ export default function (pi: ExtensionAPI) {
     await registerGroupModels(ctx);
     scan().catch(() => {});
 
-    // Footer
-    ctx.ui.setFooter((tui, theme, fd) => {
-      const unsub = fd.onBranchChange(() => tui.requestRender());
-      const timer = setInterval(() => tui.requestRender(), 30000);
-      return {
-        dispose() { unsub(); clearInterval(timer); },
-        invalidate() {},
-        render(w: number): string[] {
-          const ref = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "";
-          const grp = ref ? detectGroup(ref) : null;
-          const m = ref ? getM(ref) : null;
-          const rStr = theme.fg("accent", `${grp ?? "—"}/${ctx.model?.provider ?? "?"}/${ctx.model?.id ?? "?"}`);
-          const iStr = m ? theme.fg("warning", `int:${m.gdpval}`) : "";
-          const tStr = m ? theme.fg("success", `tps:${Math.round(m.throughput_tps)}`) : "";
-
-          let inp = 0, out = 0, cost = 0;
-          for (const e of ctx.sessionManager.getBranch()) {
-            if (e.type === "message" && e.message.role === "assistant") {
-              const a = e.message as AssistantMessage; inp += a.usage.input; out += a.usage.output; cost += a.usage.cost.total;
-            }
-          }
-          const u = ctx.getContextUsage(), pct = u?.percent ?? 0;
-          const pCol = pct > 75 ? "error" : pct > 50 ? "warning" : "success";
-          const tok = [theme.fg("accent", `${fmt(inp)}/${fmt(out)}`), theme.fg("warning", `$${cost.toFixed(2)}`), theme.fg(pCol, `${pct.toFixed(0)}%`)].join(" ");
-          const el = theme.fg("dim", `⏱${fmtTime(Date.now() - sessionStart)}`);
-          const pp = process.cwd().split("/"); const cwd = theme.fg("muted", `⌂ ${pp.length > 2 ? pp.slice(-2).join("/") : process.cwd()}`);
-          const br = fd.getGitBranch(); const brS = br ? theme.fg("accent", `⎇ ${br}`) : "";
-          const rlN = [...limits.keys()].filter(r => isLimited(r)).length;
-          const rlS = rlN > 0 ? theme.fg("error", `⛔${rlN}`) : "";
-
-          const sep = theme.fg("dim", " | ");
-          const parts = [rStr]; if (iStr && tStr) parts.push(`${iStr} ${tStr}`);
-          parts.push(tok, el, cwd); if (brS) parts.push(brS); if (rlS) parts.push(rlS);
-          return [truncateToWidth(parts.join(sep), w)];
-        },
-      };
-    });
+    // Update router status (non-invasive — preserves default footer + other extensions)
+    updateRouterStatus(ctx);
   });
 
   pi.on("session_switch", async (ev) => { if (ev.reason === "new") sessionStart = Date.now(); });
-  pi.on("model_select", async (ev) => { if (ev.source !== "restore") activeGroup = null; curModel = `${ev.model.provider}/${ev.model.id}`; });
+  pi.on("model_select", async (ev, ctx) => { if (ev.source !== "restore") activeGroup = null; curModel = `${ev.model.provider}/${ev.model.id}`; updateRouterStatus(ctx); });
   pi.on("turn_start", async (_ev, ctx) => { turnStart = Date.now(); if (ctx.model) curModel = `${ctx.model.provider}/${ctx.model.id}`; });
 
-  pi.on("turn_end", async (ev) => {
+  pi.on("turn_end", async (ev, ctx) => {
     if (!curModel || !turnStart) return;
     const ms = Date.now() - turnStart, msg = ev.message;
     if (msg?.role === "assistant") {
@@ -1025,6 +1003,7 @@ export default function (pi: ExtensionAPI) {
         cache.usage_log = cache.usage_log.filter(e => e.ts > cutoff);
       }
     }
+    updateRouterStatus(ctx);
   });
 
   pi.on("tool_result", async (ev, ctx) => {
