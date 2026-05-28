@@ -961,7 +961,7 @@ export default function (pi: ExtensionAPI) {
     const grp = ref ? detectGroup(ref) : null;
     const rlN = [...limits.keys()].filter(r => isLimited(r)).length;
     const parts: string[] = [];
-    if (grp) parts.push(theme.fg("accent", `🧭${grp}`));
+    if (grp) parts.push(theme.fg("accent", `🧭:${grp}`));
     if (rlN > 0) parts.push(theme.fg("error", `⛔${rlN}`));
     ctx.ui.setStatus("model-router", parts.length > 0 ? parts.join(" ") : undefined);
   }
